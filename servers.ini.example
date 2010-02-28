@@ -1,0 +1,25 @@
+[freenode]
+host=irc.freenode.net
+port=6667
+ssl=no
+nick=robo_
+anick=robo__
+username=robo
+realname=robo jonez
+nickserv=aD98beR3a
+chans=#nxc
+reconnect=60
+timeout=300
+
+[thegentlemens]
+host=irc.thegentlemens.net
+port=6697
+ssl=yes
+nick=robo
+anick=robo_
+username=robo
+realname=robo jonez
+nickserv=aD98beR3a
+chans=#thegentlemensclub
+reconnect=60
+timeout=300

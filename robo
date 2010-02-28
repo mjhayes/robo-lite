@@ -1,0 +1,406 @@
+#!/usr/bin/perl
+# vim: expandtab:ts=8
+
+# robo-lite v12
+# Written by: Matt Hayes <nobomb@gmail.com>
+
+use strict;
+use warnings;
+
+use Config::Tiny;
+use Cwd 'abs_path';
+use IO::Poll;
+use IO::Socket::INET;
+use IO::Socket::SSL;
+use POSIX qw(strftime);
+use Term::ANSIColor;
+
+sub xprint { print strftime("[%H:%M:%S] ", localtime).(shift); }
+$|++;
+
+# Get the directory of our executable, so we can append the path to any files,
+# enabling us to launch the executable from any directory!
+my $ap = abs_path($0);
+$ap =~ s/\/[^\/]*$//;
+
+# Write process ID to file
+open(FH, ">$ap/robo.pid") or die "Could not write $ap/robo.pid: $!\n";
+print FH $$;
+close(FH);
+
+# Colors hash (used so server messages are more easily differentiated)
+my %colors = (
+        'bold blue' => 0,
+        'bold red' => 0,
+        'bold white' => 0,
+        'bold yellow' => 0,
+        'bold green' => 0,
+        'bold magenta' => 0,
+        'bold cyan' => 0,
+        'blue' => 0,
+        'red' => 0,
+        'white' => 0,
+        'yellow' => 0,
+        'green' => 0,
+        'magenta' => 0,
+        'cyan' => 0
+);
+
+# Load servers configuration
+xprint "Loading servers.ini: ";
+my $servers = Config::Tiny->new();
+$servers = Config::Tiny->read($ap.'/servers.ini')
+        or die statz("fail: $!\n");
+print statz("success\n");
+
+# Modules and events structures
+my ($mods, $events, $hupd);
+
+# Setup the SIGHUP signal handler, which will reload modules.
+$SIG{HUP} = sub {
+        unloadmods();
+        loadmods();
+        $hupd = 1;
+};
+
+# Load modules
+unloadmods();
+loadmods();
+
+# Connect to servers
+my $conns = { };
+my $poll = IO::Poll->new();
+foreach (keys(%{$servers})) {
+        tryconn($_);
+}
+
+# Poll loop!
+while (1) {
+        my $n = $poll->poll(30000);
+        if ($n == -1) {
+                if (defined($hupd)) {
+                        $hupd = undef;
+                        next;
+                }
+                die "Poll failed!\n";
+        }
+
+        foreach (keys(%{$conns})) {
+                # This connection is not currently enabled.  This means that
+                # the initial connection probably failed, so we do need to
+                # attempt connection again some time soon.
+                if ($conns->{$_}->{enabled} == 0) {
+                        if (time() - $conns->{$_}->{lastevent} >
+                            $servers->{$_}->{reconnect}) {
+                                tryconn($_);
+                        }
+                        next;
+                # This motha timed out.  Lets disconnect and then attempt a
+                # reconnection.
+                } elsif (time() - $conns->{$_}->{lastevent} >
+                         $servers->{$_}->{timeout}) {
+                        delconn($_, $conns->{$_}->{sock});
+                        tryconn($_);
+                        next;
+                }
+
+                next if ($n == 0);
+
+                my $s = $conns->{$_}->{sock};
+                my $ev = $poll->events($conns->{$_}->{sock});
+
+                if ($ev & POLLIN) {
+                        my $buf = <$s>;
+
+                        if (!$buf) {
+                        #        xprint sclr($_).": !buf\n";
+                        #        delconn($_, $s);
+                                next;
+                        } else {
+                                event($_, $s, $buf);
+                        }
+                }
+                if ($ev & POLLOUT) {
+                        $poll->mask($s, POLLIN);
+                        auth($_, $s);
+                }
+                if ($ev & (POLLHUP | POLLERR)) {
+                        xprint sclr($_).": POLLHUP|POLLERR\n";
+                        delconn($_, $s);
+                        next;
+                }
+        }
+}
+
+# Authenticate
+sub auth {
+        my ($server, $sock) = @_;
+
+        xprint sclr($server).": Authenticating...\n";
+        print $sock 'NICK '.$servers->{$server}->{nick}."\r\n".
+                    'USER '.$servers->{$server}->{username}.
+                    ' 0 0 :'.$servers->{$server}->{realname}."\r\n";
+}
+
+# Handle this event
+sub event {
+        my ($server, $sock, $data) = @_;
+
+        xprint sclr($server).": $data";
+        $conns->{$server}->{lastevent} = time();
+
+        # Event structure
+        my $e = {
+                servers => $servers,
+                conns => $conns,
+                mods => $mods,
+
+                server => $server,
+                sinfo => $servers->{$server},
+                sock => $sock,
+                from => undef,
+                to => undef,
+                dest => undef,
+                data => undef,
+                raw => undef,
+                knick => undef,
+                _data => $data, # Unmolested buffer
+        };
+
+        chop($data); chop($data);
+
+        # RAW
+        if ($data =~ /^:(\S+) (\d+) (\S+) :(.+)/ ||
+            $data =~ /^:(\S+) (\d+) \* (\S+) :(.+)/) {
+                $e->{from} = $1;
+                $e->{raw} = $2;
+                $e->{to} = $3;
+                $e->{data} = $4;
+                event2mods($events->{raw}, $e);
+        # SNOTICE
+        } elsif ($data =~ /^NOTICE (\S+) :(.+)/) {
+                $e->{to} = $1;
+                $e->{data} = $2;
+                event2mods($events->{snotice}, $e);
+        # PRIVMSG
+        } elsif ($data =~ /^:(\S+) PRIVMSG (\S+) :(.+)$/) {
+                $e->{from} = $1;
+                $e->{to} = $2;
+                $e->{data} = $3;
+                event2mods($events->{privmsg}, $e);
+
+                # Command (nick: )
+                if ($e->{data} =~ /^([^:]+):\s*(.+)/) {
+                        if (lc($1) eq $conns->{$server}->{curnick}) {
+                                $e->{data} = $2;
+                                event2mods($events->{command}, $e);
+                        }
+                }
+        # PING
+        } elsif ($data =~ /^PING (.+)/) {
+                $e->{data} = $1;
+                event2mods($events->{ping}, $e);
+        # NOTICE
+        } elsif ($data =~ /^:(\S+) NOTICE (\S+) :(.+)/) {
+                $e->{from} = $1;
+                $e->{to} = $2;
+                $e->{data} = $3;
+                event2mods($events->{notice}, $e);
+        # PART
+        } elsif ($data =~ /^:(\S+) PART (\S+)( :(.*))?/) {
+                $e->{from} = $1;
+                $e->{to} = $2;
+                $e->{data} = $4;
+                event2mods($events->{part}, $e);
+        # JOIN
+        } elsif ($data =~ /^:(\S+) JOIN :?(.+)/) {
+                $e->{from} = $1;
+                $e->{to} = $2;
+                event2mods($events->{join}, $e);
+        # QUIT
+        } elsif ($data =~ /^:(\S+) QUIT :(.+)/) {
+                $e->{from} = $1;
+                $e->{data} = $2;
+                event2mods($events->{quit}, $e);
+        # KICK
+        } elsif ($data =~ /^:(\S+) KICK (\S+) (\S+) :(.+)/) {
+                $e->{from} = $1;
+                $e->{to} = $2;
+                $e->{knick} = $3;
+                $e->{data} = $4;
+                event2mods($events->{kick}, $e);
+        }
+}
+
+# Pass event out to the modules
+sub event2mods {
+        my ($es, $e) = @_;
+
+        # Resolve 'dest', which will decide whether this was to a channel
+        # or a private message
+        if ($e->{to} && $e->{from}) {
+                if ($e->{to} =~ /^\#.+/) {
+                        $e->{dest} = $e->{to};
+                } else {
+                        $e->{from} =~ /(.+)!.+/;
+                        $e->{dest} = $1;
+                }
+        }
+
+        # Send out to modules
+        foreach (keys(%{$es})) {
+                my $f = $mods->{$_}."->".$es->{$_};
+                eval "$f(\$e);";
+        }
+}
+
+# Remove a connection
+sub delconn {
+        my ($server, $sock) = @_;
+
+        xprint sclr($server).": Removing connection: ";
+        $poll->remove($sock);
+        $sock->close();
+        $conns->{$server}->{enabled} = 0;
+        delclr($conns->{$server}->{color});
+        print statz("success\n");
+}
+
+# Launch connection to a server
+sub tryconn {
+        my $s = shift;
+
+        my $sock;
+
+        # Connection structure
+        $conns->{$s} = {
+                enabled => 1,
+                sock => undef,
+                lastevent => undef,
+                color => getclr(),
+                curnick => $servers->{$s}->{nick},
+        };
+
+        xprint sclr($s).': Opening socket: ';
+
+        if ($servers->{$s}->{ssl} =~ /(yes|y|true|t|1)/i) {
+                $sock = IO::Socket::SSL->new(
+                        PeerAddr => $servers->{$s}->{host},
+                        PeerPort => $servers->{$s}->{port},
+                        Proto => 'tcp',
+                        Blocking => 0
+                );
+        } else {
+                $sock = IO::Socket::INET->new(
+                        PeerAddr => $servers->{$s}->{host},
+                        PeerPort => $servers->{$s}->{port},
+                        Proto => 'tcp',
+                        Blocking => 0
+                );
+        }
+
+        $conns->{$s}->{sock} = $sock;
+        $conns->{$s}->{lastevent} = time();
+
+        $poll->mask($sock, POLLIN | POLLOUT);
+        print statz("success\n");
+}
+
+# Load module
+sub loadmod {
+        my ($mp, $m) = @_;
+        require("$mp/$m.pm");
+        return "mods::${m}::${m}";
+}
+
+# Unload modules
+sub unloadmods {
+        xprint "Unloading modules: ";
+
+        foreach (keys(%{$mods})) {
+                my $m = $mods->{$_};
+                $m->crap();
+                eval "undef &".$m."::init;";
+                eval "undef &".$m."::crap;";
+        }
+
+        $mods = { };
+        $events = {
+                privmsg => { },
+                snotice => { },
+                ping => { },
+                notice => { },
+                part => { },
+                join => { },
+                quit => { },
+                kick => { },
+                raw => { },
+                command => { },
+        };
+
+        foreach (keys(%INC)) {
+                if ($_ =~ /^$ap\/mods\//) {
+                        delete $INC{$_};
+                }
+        }
+
+        print statz("success\n");
+}
+
+# Load modules
+sub loadmods {
+        xprint "Loading modules...\n";
+
+        my @mod_paths = <$ap/mods/*>;
+        foreach my $mp (@mod_paths) {
+                $mp =~ /\/([^\/]*)$/;
+                my $m = $1;
+
+                xprint "  $m: ";
+
+                eval {
+                        $mods->{$m} = loadmod($mp, $m);
+                };
+                if ($@) {
+                        print statz("fail\n");
+                        next;
+                }
+
+                my $e = $mods->{$m}->init();
+                foreach (keys(%{$e})) {
+                        $events->{$_}->{$m} = $e->{$_};
+                }
+
+                print statz("success\n");
+        }
+}
+
+# Server name colorized
+sub sclr {
+        my $s = shift;
+        return color($conns->{$s}->{color}).$s.color('reset');
+}
+
+# Get an unused color
+sub getclr {
+        foreach (keys(%colors)) {
+                if ($colors{$_} == 0) {
+                        $colors{$_} = 1;
+                        return $_;
+                }
+        }
+
+        return 'reset';
+}
+
+# Stop using a color
+sub delclr {
+        my $key = shift;
+        return if ($key eq 'reset');
+        $colors{$key} = 0;
+}
+
+# Colored "stat" message, usually success/fail
+sub statz {
+        return color('bold green').(shift).color('reset');
+}
