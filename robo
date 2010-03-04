@@ -76,7 +76,9 @@ foreach (keys(%{$servers})) {
 
 # Poll loop!
 while (1) {
-        my $n = $poll->poll(30000);
+        # We want poll to return after 10 seconds so we can check timeouts in
+        # case we disconnect from somewhere or everywhere
+        my $n = $poll->poll(10);
         if ($n == -1) {
                 if (defined($hupd)) {
                         $hupd = undef;
@@ -112,13 +114,8 @@ while (1) {
                 if ($ev & POLLIN) {
                         my $buf = <$s>;
 
-                        if (!$buf) {
-                        #        xprint sclr($_).": !buf\n";
-                        #        delconn($_, $s);
-                                next;
-                        } else {
-                                event($_, $s, $buf);
-                        }
+                        next if (!$buf);
+                        event($_, $s, $buf);
                 }
                 if ($ev & POLLOUT) {
                         $poll->mask($s, POLLIN);
