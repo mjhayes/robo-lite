@@ -7,11 +7,15 @@ use XML::Simple;
 use LWP::Simple;
 
 sub init {
-        return { command => 'hcommand' };
+        return {
+                command => 'hcommand',
+                help => 'hhelp',
+        };
 }
 
 sub crap {
         undef &hcommand;
+        undef &hhelp;
         undef &read_weather;
 }
 
@@ -24,6 +28,14 @@ sub hcommand {
         }
 }
 
+sub hhelp {
+        shift;
+        my $e = shift;
+
+        print {$e->{sock}} 'PRIVMSG '.$e->{dest}.
+                           " :weather [zip|city] - Show current forecast info\r\n";
+}
+
 # Read the Google weather XML feed.
 sub read_weather {
         my ($e, $input) = @_;
@@ -31,15 +43,15 @@ sub read_weather {
         # Download the xml content:
         # The get() function downloads any text file from the web
         # and will store it in a variable.
-        my $ua = LWP::UserAgent->new(agent => "Mozilla/5.0 (X11; U; Linux i686; ".
-                                              "en-US; rv:1.9.0.2) ".
-                                              "Gecko/2008092313 Ubuntu/8.04 ".
-                                              "(hardy) Firefox/3.1");
+        my $ua = LWP::UserAgent->new(agent => 'Mozilla/5.0 (X11; U; Linux i686; '.
+                                              'en-US; rv:1.9.0.2) '.
+                                              'Gecko/2008092313 Ubuntu/8.04 '.
+                                              '(hardy) Firefox/3.1');
 
         my $response = $ua->get("http://www.google.com/ig/api?weather=".$input);
         if (!$response->is_success) {
                 print {$e->{sock}} 'PRIVMSG '.$e->{dest}.
-                                   " :\002weather\002: Could not download weather XML!\r\n";
+                                   " :Could not download weather XML!\r\n";
                 return;
         }
 
@@ -56,7 +68,7 @@ sub read_weather {
         my $low = $xml->{weather}->{forecast_conditions}->[0]->{low}->{data};
         my $condition = $xml->{weather}->{forecast_conditions}->[0]->{condition}->{data};
 
-        print {$e->{sock}} 'PRIVMSG '.$e->{dest}." :\002weather\002: ".$city.
+        print {$e->{sock}} 'PRIVMSG '.$e->{dest}.' :'.$city.
                            ' - Current temp: '.$cur_temp.'F - '.$cur_wind.
                            ' - High: '.$high.' - Low: '.$low.
                            ' - Condition: '.$condition."\r\n";

@@ -34,14 +34,14 @@ sub read_link {
         # The get() function downloads any text file from the web
         # and will store it in a variable.
         my $ua = LWP::UserAgent->new(
-                agent => "Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9.0.2) ".
-                         "Gecko/2008092313 Ubuntu/8.04 (hardy) Firefox/3.1"
+                agent => 'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9.0.2) '.
+                         'Gecko/2008092313 Ubuntu/8.04 (hardy) Firefox/3.1'
         );
 
         my $response = $ua->head($url);
         if (!$response->is_success) {
                 print {$e->{sock}} 'PRIVMSG '.$e->{dest}.
-                                   " :\002url\002: Could not download page head!\r\n";
+                                   " :Could not download page head!\r\n";
                 return;
         }
 
@@ -57,7 +57,7 @@ sub read_link {
                 $response = $ua->get($url);
                 if (!$response->is_success) {
                         print {$e->{sock}} 'PRIVMSG '.$e->{dest}.
-                                           " :\002url\002: Could not download page content!\r\n";
+                                           " :Could not download page content!\r\n";
                         return;
                 }
 
@@ -76,10 +76,10 @@ sub read_link {
                         $title =~ s/$&/$char/g;
                 }
 
-                print {$e->{sock}} 'PRIVMSG '.$e->{dest}." :\002url\002: ".$title.
+                print {$e->{sock}} 'PRIVMSG '.$e->{dest}.' :'.$title.
                                    " \002(\002".calc_size($length)."\002)\002\r\n";
         } else {
-                print {$e->{sock}} 'PRIVMSG '.$e->{dest}." :\002url\002: ".$type.
+                print {$e->{sock}} 'PRIVMSG '.$e->{dest}.' :'.$type.
                                    " \002(\002".calc_size($length)."\002)\002\r\n";
         }
 }

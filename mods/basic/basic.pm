@@ -8,6 +8,8 @@ sub init {
                 ping => 'hping',
                 raw => 'hraw',
                 privmsg => 'hprivmsg',
+                command => 'hcommand',
+                help => 'hhelp',
         };
 }
 
@@ -15,6 +17,9 @@ sub crap {
         undef &hraw;
         undef &hping;
         undef &hprivmsg;
+        undef &hcommand;
+        undef &hhelp;
+        undef &lsmod;
 }
 
 sub hraw {
@@ -53,6 +58,37 @@ sub hprivmsg {
                                    " :\1VERSION robo-lite v12".
                                    " - pwnagest b0t in teh w0rld.\1\r\n";
         }
+}
+
+sub hcommand {
+        shift;
+        my $e = shift;
+
+        if ($e->{data} =~ /^source/) {
+                print {$e->{sock}} 'PRIVMSG '.$e->{dest}.
+                                   " :http://github.com/mjhayes/robo-lite\r\n";
+        } elsif ($e->{data} =~ /^lsmod/) {
+                lsmod($e);
+        }
+}
+
+sub hhelp {
+        shift;
+        my $e = shift;
+
+        print {$e->{sock}} 'PRIVMSG '.$e->{dest}.
+                           " :lsmod - List loaded modules\r\n";
+}
+
+sub lsmod {
+        my $e = shift;
+
+        my $m = ' :';
+        foreach (keys(%{$e->{mods}})) {
+                $m .= "$_ ";
+        }
+
+        print {$e->{sock}} 'PRIVMSG '.$e->{dest}.$m."\r\n";
 }
 
 1;

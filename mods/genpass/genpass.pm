@@ -4,11 +4,15 @@ use strict;
 use warnings;
 
 sub init {
-        return { command => 'hcommand' };
+        return {
+                command => 'hcommand',
+                help => 'hhelp',
+        };
 }
 
 sub crap {
         undef &hcommand;
+        undef &hhelp;
         undef &genpass;
 }
 
@@ -21,6 +25,14 @@ sub hcommand {
         }
 }
 
+sub hhelp {
+        shift;
+        my $e = shift;
+
+        print {$e->{sock}} 'PRIVMSG '.$e->{dest}.
+                           " :gen [1-64] - Generate a random string\r\n";
+}
+
 sub genpass {
         my ($e, $num) = @_;
 
@@ -29,7 +41,7 @@ sub genpass {
         my $out = "";
 
         if ($num <= 0 || $num > 64) {
-                print {$e->{sock}} "PRIVMSG ".$e->{dest}." :\002gen\002: ".
+                print {$e->{sock}} 'PRIVMSG '.$e->{dest}.' :'.
                                    "use a value between 1 and 64 douchebag.\r\n";
                 return;
         }
@@ -40,7 +52,7 @@ sub genpass {
         }
 
         $e->{from} =~ /(.+)!.+/;
-        print {$e->{sock}} "NOTICE ".$1." :\002gen\002: ".$out."\r\n";
+        print {$e->{sock}} "NOTICE ".$1.' :'.$out."\r\n";
 }
 
 1;

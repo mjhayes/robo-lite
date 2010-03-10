@@ -25,8 +25,11 @@ sub hcommand {
                 my $thread_eval = threads->create('eval_thread', $e, $1);
                 my $thread_timeout = threads->create('eval_timeout', $e, $thread_eval, 2);
 
+                print "join...\n";
                 my @ret = $thread_eval->join();
+                print "detach...\n";
                 $thread_timeout->detach();
+                print "done...\n";
         }
 }
 
@@ -34,17 +37,17 @@ sub hcommand {
 sub eval_thread {
         my ($e, $one) = @_;
 
+         # Thread 'cancellation' signal handler
+        $SIG{'KILL'} = sub {
+                threads->exit() if threads->can('exit');
+                exit(0);
+        };
+
         # Create safe compartment.
         my $compartment = new Safe;
         $compartment->permit_only(
                 qw(join rand pushre regcmaybe regcreset regcomp subst substcont concat padany :base_core :base_loop)
         );
-
-        # Thread 'cancellation' signal handler
-        $SIG{'KILL'} = sub {
-                threads->exit() if threads->can('exit');
-                exit(0);
-        };
 
         # Evaluate the expression.
         my $result = $compartment->reval($one);
@@ -73,13 +76,19 @@ sub eval_timeout {
         # This determines how long we let our eval thread run for.
         sleep($timeout);
 
+        print "thread check\n";
+
         # If the thread is still running, stop it.
         if ($thread && $thread->is_running()) {
+                print "here\n";
+
                 print {$e->{sock}} "PRIVMSG ".$e->{dest}.
                       " :eval: Evaluation terminated (exceeded alotted time of ".
                       $timeout." seconds).\r\n";
                 $thread->kill('KILL')->detach();
         }
+
+        print "done with that\n";
 }
 
 1;

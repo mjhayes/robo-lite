@@ -13,7 +13,6 @@ use IO::Poll;
 use IO::Socket::INET;
 use IO::Socket::SSL;
 use POSIX qw(strftime);
-use Term::ANSIColor;
 
 sub xprint { print strftime("[%H:%M:%S] ", localtime).(shift); }
 $|++;
@@ -28,30 +27,12 @@ open(FH, ">$ap/robo.pid") or die "Could not write $ap/robo.pid: $!\n";
 print FH $$;
 close(FH);
 
-# Colors hash (used so server messages are more easily differentiated)
-my %colors = (
-        'bold blue' => 0,
-        'bold red' => 0,
-        'bold white' => 0,
-        'bold yellow' => 0,
-        'bold green' => 0,
-        'bold magenta' => 0,
-        'bold cyan' => 0,
-        'blue' => 0,
-        'red' => 0,
-        'white' => 0,
-        'yellow' => 0,
-        'green' => 0,
-        'magenta' => 0,
-        'cyan' => 0
-);
-
 # Load servers configuration
 xprint "Loading servers.ini: ";
 my $servers = Config::Tiny->new();
 $servers = Config::Tiny->read($ap.'/servers.ini')
-        or die statz("fail: $!\n");
-print statz("success\n");
+        or die "fail: $!\n";
+print "success\n";
 
 # Modules and events structures
 my ($mods, $events, $hupd);
@@ -106,23 +87,31 @@ while (1) {
                         next;
                 }
 
+                # Nothing happened on any of our FDs
                 next if ($n == 0);
 
                 my $s = $conns->{$_}->{sock};
-                my $ev = $poll->events($conns->{$_}->{sock});
 
+                # Socket isn't valid
+                next if (!$s);
+
+                my $ev = $poll->events($s);
+
+                # Ready to read
                 if ($ev & POLLIN) {
                         my $buf = <$s>;
 
                         next if (!$buf);
                         event($_, $s, $buf);
                 }
+                # Ready to write (we get this when a connection succeeds)
                 if ($ev & POLLOUT) {
                         $poll->mask($s, POLLIN);
                         auth($_, $s);
                 }
+                # Error (usually bad connect)
                 if ($ev & (POLLHUP | POLLERR)) {
-                        xprint sclr($_).": POLLHUP|POLLERR\n";
+                        xprint "$_: POLLHUP|POLLERR\n";
                         delconn($_, $s);
                         next;
                 }
@@ -133,7 +122,7 @@ while (1) {
 sub auth {
         my ($server, $sock) = @_;
 
-        xprint sclr($server).": Authenticating...\n";
+        xprint "$server: Authenticating...\n";
         print $sock 'NICK '.$servers->{$server}->{nick}."\r\n".
                     'USER '.$servers->{$server}->{username}.
                     ' 0 0 :'.$servers->{$server}->{realname}."\r\n";
@@ -143,7 +132,7 @@ sub auth {
 sub event {
         my ($server, $sock, $data) = @_;
 
-        xprint sclr($server).": $data";
+        xprint "$server: $data";
         $conns->{$server}->{lastevent} = time();
 
         # Event structure
@@ -186,8 +175,14 @@ sub event {
                 $e->{data} = $3;
                 event2mods($events->{privmsg}, $e);
 
-                # Command (nick: )
-                if ($e->{data} =~ /^([^:]+):\s*(.+)/) {
+                # Command help (<nick>: help <module>
+                if ($e->{data} =~ /^([^:]+):\s*help\s+(.+)/) {
+                        if (lc($1) eq $conns->{$server}->{curnick}) {
+                                $e->{data} = $2;
+                                event2mods($events->{help}, $e, $2);
+                        }
+                # Command (<nick>: )
+                } elsif ($e->{data} =~ /^([^:]+):\s*(.+)/) {
                         if (lc($1) eq $conns->{$server}->{curnick}) {
                                 $e->{data} = $2;
                                 event2mods($events->{command}, $e);
@@ -231,7 +226,7 @@ sub event {
 
 # Pass event out to the modules
 sub event2mods {
-        my ($es, $e) = @_;
+        my ($es, $e, $m) = @_;
 
         # Resolve 'dest', which will decide whether this was to a channel
         # or a private message
@@ -242,6 +237,16 @@ sub event2mods {
                         $e->{from} =~ /(.+)!.+/;
                         $e->{dest} = $1;
                 }
+        }
+
+        # If we are specifying a module, we want it to go out to just one
+        if ($m) {
+                return if (!$mods->{$m});
+                return if (!$es->{$m});
+
+                my $f = $mods->{$m}."->".$es->{$m};
+                eval "$f(\$e);";
+                return;
         }
 
         # Send out to modules
@@ -255,12 +260,15 @@ sub event2mods {
 sub delconn {
         my ($server, $sock) = @_;
 
-        xprint sclr($server).": Removing connection: ";
-        $poll->remove($sock);
-        $sock->close();
+        xprint "$server: Removing connection: ";
+
+        if ($sock) {
+                $poll->remove($sock);
+                $sock->close();
+        }
+
         $conns->{$server}->{enabled} = 0;
-        delclr($conns->{$server}->{color});
-        print statz("success\n");
+        print "success\n";
 }
 
 # Launch connection to a server
@@ -274,11 +282,10 @@ sub tryconn {
                 enabled => 1,
                 sock => undef,
                 lastevent => undef,
-                color => getclr(),
                 curnick => $servers->{$s}->{nick},
         };
 
-        xprint sclr($s).': Opening socket: ';
+        xprint "$s: Opening socket: ";
 
         if ($servers->{$s}->{ssl} =~ /(yes|y|true|t|1)/i) {
                 $sock = IO::Socket::SSL->new(
@@ -299,8 +306,13 @@ sub tryconn {
         $conns->{$s}->{sock} = $sock;
         $conns->{$s}->{lastevent} = time();
 
+        if (!$sock) {
+                print "fail\n";
+                return;
+        }
+
         $poll->mask($sock, POLLIN | POLLOUT);
-        print statz("success\n");
+        print "success\n";
 }
 
 # Load module
@@ -333,6 +345,7 @@ sub unloadmods {
                 kick => { },
                 raw => { },
                 command => { },
+                help => { },
         };
 
         foreach (keys(%INC)) {
@@ -341,7 +354,7 @@ sub unloadmods {
                 }
         }
 
-        print statz("success\n");
+        print "success\n";
 }
 
 # Load modules
@@ -355,11 +368,9 @@ sub loadmods {
 
                 xprint "  $m: ";
 
-                eval {
-                        $mods->{$m} = loadmod($mp, $m);
-                };
+                eval { $mods->{$m} = loadmod($mp, $m); };
                 if ($@) {
-                        print statz("fail\n");
+                        print "fail\n";
                         next;
                 }
 
@@ -368,36 +379,6 @@ sub loadmods {
                         $events->{$_}->{$m} = $e->{$_};
                 }
 
-                print statz("success\n");
+                print "success\n";
         }
-}
-
-# Server name colorized
-sub sclr {
-        my $s = shift;
-        return color($conns->{$s}->{color}).$s.color('reset');
-}
-
-# Get an unused color
-sub getclr {
-        foreach (keys(%colors)) {
-                if ($colors{$_} == 0) {
-                        $colors{$_} = 1;
-                        return $_;
-                }
-        }
-
-        return 'reset';
-}
-
-# Stop using a color
-sub delclr {
-        my $key = shift;
-        return if ($key eq 'reset');
-        $colors{$key} = 0;
-}
-
-# Colored "stat" message, usually success/fail
-sub statz {
-        return color('bold green').(shift).color('reset');
 }
