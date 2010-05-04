@@ -1,3 +1,5 @@
+# vim: expandtab:ts=4
+
 package mods::eval::eval;
 
 use strict;

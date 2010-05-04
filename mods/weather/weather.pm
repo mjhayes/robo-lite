@@ -1,3 +1,5 @@
+# vim: expandtab:ts=4
+
 package mods::weather::weather;
 
 use strict;

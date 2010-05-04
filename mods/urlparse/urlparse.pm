@@ -1,8 +1,11 @@
+# vim: expandtab:ts=4
+
 package mods::urlparse::urlparse;
 
 use strict;
 use warnings;
 
+use HTML::Entities;
 use LWP::UserAgent;
 
 sub init {
@@ -21,7 +24,7 @@ sub hprivmsg {
         my $e = shift;
 
         # URL trigger.
-        if ($e->{data} =~ /^(http:\/\/\S+)$/) {
+        if ($e->{data} =~ /^\s*(http:\/\/\S+)\s*$/) {
                 read_link($e, $1);
         }
 }
@@ -71,10 +74,7 @@ sub read_link {
                 $title = $1 if ($content =~ /<title>\s*([^<]+)\s*<\/title>/i);
 
                 # Replace any ascii codes with their corresponding characters.
-                while ($title =~ m/\&\#(\d+);/g) {
-                        my $char = chr($1);
-                        $title =~ s/$&/$char/g;
-                }
+                decode_entities($title);
 
                 print {$e->{sock}} 'PRIVMSG '.$e->{dest}.' :'.$title.
                                    " \002(\002".calc_size($length)."\002)\002\r\n";
