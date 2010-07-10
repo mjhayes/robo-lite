@@ -5,8 +5,6 @@ package mods::snp::snp;
 use strict;
 use warnings;
 
-use Data::Dumper;
-
 # Holds the last thing said.
 our %last_said = ();
 
