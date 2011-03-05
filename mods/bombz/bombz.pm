@@ -21,7 +21,10 @@ sub hcommand {
     my $e = shift;
 
     if ($e->{data} =~ /^bombz$/) {
-        get_bombzcount($e);
+        threads->create(sub {
+            $SIG{'KILL'} = sub { threads->exit(); };
+            get_bombzcount($e);
+        });
     }
 }
 

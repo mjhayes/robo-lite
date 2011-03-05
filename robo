@@ -6,6 +6,7 @@
 
 use strict;
 use warnings;
+use threads;
 
 use Config::Tiny;
 use Cwd 'abs_path';
@@ -169,6 +170,12 @@ while (1) {
             next;
         }
     }
+
+    # Check if we can join any threads.
+    my @joinable = threads->list(threads::joinable);
+    foreach (@joinable) {
+        $_->join();
+    }
 }
 
 # Start listening, if enabled
@@ -232,6 +239,7 @@ sub event {
 
     # Event structure
     my $e = {
+        tid => threads->tid(),
         servers => $servers,
         conns => $conns,
         mods => $mods,
@@ -352,6 +360,48 @@ sub event2mods {
     foreach (keys(%{$es})) {
         my $f = $mods->{$_}."->".$es->{$_};
         eval "$f(\$e);";
+    }
+}
+
+# Pass event out to the modules
+sub event2mods_thread {
+    my ($es, $e, $m) = @_;
+
+    # Resolve 'dest', which will decide whether this was to a channel
+    # or a private message
+    if ($e->{to} && $e->{from}) {
+        if ($e->{to} =~ /^\#.+/) {
+            $e->{dest} = $e->{to};
+        } else {
+            $e->{from} =~ /(.+)!.+/;
+            $e->{dest} = $1;
+        }
+    }
+
+    # If we are specifying a module, we want it to go out to just one
+    if ($m) {
+        return if (!$mods->{$m});
+        return if (!$es->{$m});
+
+        my $f = $mods->{$m}."->".$es->{$m};
+        threads->create(
+            sub {
+                $SIG{'KILL'} = sub { threads->exit(); };
+                eval "$f(\$e);";
+            }
+        );
+        return;
+    }
+
+    # Send out to modules
+    foreach (keys(%{$es})) {
+        my $f = $mods->{$_}."->".$es->{$_};
+        threads->create(
+            sub {
+                $SIG{'KILL'} = sub { threads->exit(); };
+                eval "$f(\$e);";
+            }
+        );
     }
 }
 

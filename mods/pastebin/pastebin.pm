@@ -8,11 +8,15 @@ use warnings;
 use MIME::Base64 ();
 
 sub init {
-    return { listener => 'hlistener' };
+    return {
+        listener => 'hlistener',
+        command => 'hcommand',
+    };
 }
 
 sub crap {
     undef &hlistener;
+    undef &hcommand;
 }
 
 sub hlistener {
@@ -44,6 +48,16 @@ sub hlistener {
                        "($type: $size bytes) ".
                        "by $ip - $url".
                        "\r\n";
+}
+
+sub hcommand {
+    shift;
+    my $e = shift;
+
+    if ($e->{data} =~ /^(pb|paste|pastebin)$/) {
+        print {$e->{sock}} 'PRIVMSG '.$e->{dest}.
+                           " :http://nxc.mooo.com/pb\r\n";
+    }
 }
 
 1;

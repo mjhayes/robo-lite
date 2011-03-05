@@ -22,7 +22,10 @@ sub hcommand {
     my $e = shift;
 
     if ($e->{data} =~ /^kernel$/) {
-        read_kernel($e);
+        threads->create(sub {
+            $SIG{'KILL'} = sub { threads->exit(); };
+            read_kernel($e);
+        });
     }
 }
 

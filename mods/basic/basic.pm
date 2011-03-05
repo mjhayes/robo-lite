@@ -4,6 +4,7 @@ package mods::basic::basic;
 
 use strict;
 use warnings;
+use threads;
 
 sub init {
     return {
@@ -22,6 +23,8 @@ sub crap {
     undef &hcommand;
     undef &hhelp;
     undef &lsmod;
+    undef &killthreads;
+    undef &lsthreads;
 }
 
 sub hraw {
@@ -71,6 +74,10 @@ sub hcommand {
                            " :http://github.com/mjhayes/robo-lite\r\n";
     } elsif ($e->{data} =~ /^lsmod/) {
         lsmod($e);
+    } elsif ($e->{data} =~ /^killthreads/) {
+        killthreads($e);
+    } elsif ($e->{data} =~ /^lsthreads/) {
+        lsthreads($e);
     }
 }
 
@@ -91,6 +98,34 @@ sub lsmod {
     }
 
     print {$e->{sock}} 'PRIVMSG '.$e->{dest}.$m."\r\n";
+}
+
+sub killthreads {
+    my $e = shift;
+
+    my @running = threads->list(threads::running);
+    foreach (@running) {
+        if ($_->tid() != threads->tid() && $_->tid() != $e->{tid}) {
+            print {$e->{sock}} 'PRIVMSG '.$e->{dest}.' :Killing thread '.$_->tid()."\r\n";
+            $_->kill('KILL')->detach();
+        }
+    }
+}
+
+sub lsthreads {
+    my $e = shift;
+
+    my @running = threads->list(threads::running);
+    foreach (@running) {
+        my $xtra = '';
+
+        if ($_->tid() == threads->tid()) {
+            $xtra = ' (current)';
+        } elsif ($_->tid() == $e->{tid}) {
+            $xtra = ' (core)';
+        }
+        print {$e->{sock}} 'PRIVMSG '.$e->{dest}.' :Thread '.$_->tid().$xtra."\r\n";
+    }
 }
 
 1;
